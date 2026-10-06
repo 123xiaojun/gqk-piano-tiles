@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>音效地址探测</title>
+<style>
+  body{background:#111;color:#eee;font-family:system-ui,"Microsoft YaHei",sans-serif;
+       margin:0;padding:12px;font-size:14px;line-height:1.7;}
+  h1{font-size:17px;margin:0 0 6px;}
+  .info{color:#8ab;font-size:13px;margin-bottom:10px;word-break:break-all;}
+  .row{border:1px solid #333;border-radius:6px;padding:8px 10px;margin-bottom:8px;background:#181818;}
+  .url{color:#9cf;word-break:break-all;font-family:monospace;font-size:12px;}
+  .st{margin-top:4px;}
+  .ok{color:#5f5;} .no{color:#f66;} .wait{color:#fc6;}
+  button{background:#eee;color:#111;border:0;border-radius:5px;padding:10px 18px;
+         font-size:15px;font-weight:700;margin:6px 0;}
+  audio{width:100%;margin-top:6px;height:34px;}
+  .tip{color:#888;font-size:12px;margin-top:10px;}
+</style>
+</head>
+<body>
+<h1>音效地址探测</h1>
+<div class="info" id="info"></div>
+<button id="go">开始探测</button>
+<div id="list"></div>
+<div class="tip">
+  判定标准：<b>解码成功 / 有声音</b> = 这个地址可用。<br>
+  把可用的那一行拍照发我，或直接把它填进 index.html 的 <code>SOUND_BASE</code>。
+</div>
+
+<script>
+(function () {
+  var FILE = '222.mp3';
+  var host = location.hostname, port = location.port ? ':' + location.port : '';
+  var proto = location.protocol;
+
+  // 候选地址：同一个文件的不同协议/端口写法
+  var urls = [];
+  urls.push(FILE);                                                              // 相对路径（http 访问时用这个）
+  urls.push(proto + '//' + host + port + '/' + FILE);                           // 当前页面协议（通常 https）
+  urls.push('https://' + host + port + '/' + FILE);                             // 强制 https
+  urls.push('http://' + host + port + '/' + FILE);                              // 强制 http
+  // 去重
+  var seen = {}, list = [];
+  for (var i = 0; i < urls.length; i++) { if (!seen[urls[i]]) { seen[urls[i]] = 1; list.push(urls[i]); } }
+
+  document.getElementById('info').textContent =
+    '页面协议 = ' + proto + '\n主机 = ' + host + (port || '（无端口）') + '\n探测文件 = ' + FILE;
+
+  var box = document.getElementById('list');
+
+  function addRow(u) {
+    var d = document.createElement('div');
+    d.className = 'row';
+    var a = document.createElement('div');
+    a.className = 'url';
+    a.textContent = u;
+    var s = document.createElement('div');
+    s.className = 'st wait';
+    s.textContent = '探测中…';
+    var au = document.createElement('audio');
+    au.controls = true;
+    au.preload = 'auto';
+    d.appendChild(a); d.appendChild(s); d.appendChild(au);
+    box.appendChild(d);
+    return { status: s, audio: au };
+  }
+
+  function setSt(node, cls, text) {
+    node.className = 'st ' + cls;
+    node.textContent = text;
+  }
+
+  function probe(u) {
+    return new Promise(function (resolve) {
+      var refs = addRow(u);
+      // 1) fetch + 解码
+      fetch(u)
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          var cl = r.headers.get('content-length');
+          return r.arrayBuffer().then(function (b) { return { buf: b, cl: cl }; });
+        })
+        .then(function (o) {
+          var AC = window.AudioContext || window.webkitAudioContext;
+          var ctx = new AC();
+          return new Promise(function (res, rej) {
+            var p = ctx.decodeAudioData(o.buf, res, rej);
+            if (p && p.then) p.catch(rej);
+          }).then(function (dec) {
+            setSt(refs.status, 'ok', '✓ fetch 拿到 ' + o.buf.byteLength + ' 字节' +
+                  (o.cl ? '（响应头 Content-Length=' + o.cl + '）' : '（响应头没给 Content-Length）') +
+                  '，解码成功 ' + dec.duration.toFixed(2) + ' 秒');
+            refs.audio.src = u;
+            try { refs.audio.load(); } catch (x) {}
+            resolve(true);
+          });
+        })
+        .catch(function (e) {
+          // 2) 退一步：只用 <audio> 直接加载，看媒体通道能不能行
+          setSt(refs.status, 'wait', 'fetch/解码失败（' + (e && e.message ? e.message : e) + '），改试媒体通道…');
+          refs.audio.src = u;
+          var done = false;
+          function ok() {
+            if (done) return; done = true;
+            setSt(refs.status, 'ok', '✓ fetch 不行，但 <audio> 媒体通道可用（时长 ' +
+                  (isFinite(refs.audio.duration) ? refs.audio.duration.toFixed(2) : '?') + ' 秒）');
+            resolve(true);
+          }
+          function bad() {
+            if (done) return; done = true;
+            setSt(refs.status, 'no', '✗ 两种通道都失败：fetch=' + (e && e.message ? e.message : e) + '，媒体加载也报错');
+            resolve(false);
+          }
+          refs.audio.addEventListener('loadedmetadata', ok);
+          refs.audio.addEventListener('canplay', ok);
+          refs.audio.addEventListener('error', bad);
+          setTimeout(function () { if (!done) { done = true;
+            setSt(refs.status, 'no', '✗ 8 秒无响应（超时）：fetch 失败且媒体通道没反应');
+            resolve(false); } }, 8000);
+          try { refs.audio.load(); } catch (x) {}
+        });
+    });
+  }
+
+  document.getElementById('go').addEventListener('click', function () {
+    this.disabled = true;
+    box.innerHTML = '';
+    var chain = Promise.resolve();
+    list.forEach(function (u) { chain = chain.then(function () { return probe(u); }); });
+  });
+})();
+</script>
+</body>
+</html>

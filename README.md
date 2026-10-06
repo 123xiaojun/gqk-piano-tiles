@@ -4,8 +4,6 @@
 
 > 整个游戏就是一个 `index.html`，双击即玩，不需要服务器、npm、构建工具或任何第三方库。
 
-**在线试玩：** <https://123xiaojun.github.io/gqk-piano-tiles/>
-
 ![游戏画面](screenshot.png)
 
 ## 玩法
@@ -92,4 +90,12 @@ index.html?sndbase=https://your.host/audio
 
 ## 开源协议
 
-[MIT](LICENSE)
+本项目采用**「非商用免费 / 商用需授权」**协议：
+
+- ✅ **个人学习、研究、教学等非商业用途**：免费使用，保留署名即可
+- ❌ **任何商业用途**：须事先取得作者书面授权
+
+> 💼 **如需商用，请联系本人：** <https://github.com/123xiaojun>
+> 作者：**123xiaojun**
+
+完整条款见 [LICENSE](LICENSE)。

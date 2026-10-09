@@ -67,11 +67,11 @@ index.html?sndbase=https://your.host/audio
 ```
 .
 ├── index.html        # 游戏本体（结构 + 样式 + 逻辑，单文件）
-├── audio-test.html   # 音效地址探测工具
-├── gqk.png           # 未按下状态的方块图案
-├── gqk1.png          # 已按下状态的方块图案
-├── 111.MP3           # 按下音效
-└── 222.MP3           # 结束音效
+├──sucai
+  ├── gqk.png           # 未按下状态的方块图案
+  ├── gqk1.png          # 已按下状态的方块图案
+  ├── 111.MP3           # 按下音效
+  └── 222.MP3           # 结束音效
 ```
 
 ## 可调参数

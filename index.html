@@ -34,18 +34,23 @@
   .cell{flex:1 1 0;min-width:0;height:100%;position:relative;}
   .tilewrap{position:absolute;inset:0;overflow:hidden;border-radius:3px;}
 
-  /* 方块：白底 + gqk.png；图片解码失败时只剩白底，照样能玩 */
+  /* 方块：白底 + sucai/gqk.png；图片解码失败时只剩白底，照样能玩 */
+  /* 关键：CSS 里的 url() 是按【本页面文件所在目录】解析的，图片都在 sucai/ 里，
+     所以必须写成 "sucai/xxx.png"；写成 "xxx.png" 会去根目录找，永远 404 加载不出来 */
   .tile{width:100%;height:100%;background:#fff;border-radius:3px;cursor:pointer;overflow:hidden;}
-  .tile.img{background:#fff url("gqk.png") center/contain no-repeat;}
+  .tile.img{background:#fff url("sucai/gqk.png") center/contain no-repeat;}
   /* 唯一可按的那个：一圈白框提示 */
   .tile.next{outline:3px solid #fff;outline-offset:-3px;}
-  /* 已按下：深灰 + gqk1.png，且不再响应 */
+  /* 已按下：深灰 + sucai/gqk2.png，留在盘面上不再响应 */
   .tile.done{
     background:#262626;pointer-events:none;cursor:default;
     display:flex;align-items:center;justify-content:center;
   }
-  .tile.done.img{background:#262626 url("gqk1.png") center/contain no-repeat;}
-  .tile.done::after{content:'';width:34%;height:34%;background:#777;border-radius:2px;}
+  .tile.done.img{background:#262626 url("sucai/gqk2.png") center/contain no-repeat;}
+  /* sucai/gqk2.png 不存在时，用 sucai/gqk1.png 顶替 */
+  .tile.done.imgf{background:#262626 url("sucai/gqk1.png") center/contain no-repeat;}
+  /* 连兜底图都加载不出来时，才显示中间那个灰方块 */
+  .tile.done:not(.img):not(.imgf)::after{content:'';width:34%;height:34%;background:#777;border-radius:2px;}
 
   /* 覆盖层 */
   #start,#over{
@@ -72,7 +77,7 @@
     #hud .s b{font-size:17px;}
     #grid{gap:1px;}
     .row{gap:1px;}
-    .tile.done::after{width:30%;height:30%;}
+    .tile.done:not(.img):not(.imgf)::after{width:30%;height:30%;}
     .tile.next{outline-width:2px;outline-offset:-2px;}
   }
 </style>
@@ -122,7 +127,7 @@ window.onerror = function (msg, src, line, col) {
   'use strict';
 
   /* ======= 参数 ======= */
-  var BUILD = 17;        // 构建号：页面上会显示，用来确认浏览器加载的是最新版
+  var BUILD = 20;        // 构建号：页面上会显示，用来确认浏览器加载的是最新版
   var ROWS = 12;         // 行数
   var COLS = 4;          // 列数：每行 4 个格子
   var DURATION = 20;     // 限时（秒）
@@ -140,7 +145,7 @@ window.onerror = function (msg, src, line, col) {
   var cursor = 0;           // 当前该按的行在 rows 里的下标
   var score = 0, endAt = 0, raf = 0, lastPress = 0;
   var best = 0;
-  var imgOK = { idle: false, done: false };
+  var imgOK = { idle: false, done: false, alt: false };   // idle=未按下图 done=按下图 alt=按下兜底图
 
   /* ======= 图案：纯随机，每行最多一个方块 ======= */
   // 该列在已有行的末尾连续出现了几行
@@ -346,8 +351,8 @@ window.onerror = function (msg, src, line, col) {
     }
     if (!resolving) {
       resolving = true;
-      resolveSound('hit', '111.mp3');
-      resolveSound('end', '222.mp3');
+      resolveSound('hit', './sucai/yinxiao.mp3');
+      resolveSound('end', './sucai/yinxiao1.mp3');
     }
     if (!prewarmed) {
       prewarmed = true;
@@ -385,7 +390,10 @@ window.onerror = function (msg, src, line, col) {
       parts.push('hit=' + (buffers.hit ? 'ok' : (media.hit ? '媒体通道' : '未就绪')));
       parts.push('end=' + (buffers.end ? 'ok' : (media.end ? '媒体通道' : '未就绪')));
       if (chosen.hit) parts.push('源=' + chosen.hit);
-      if (pageHttps) parts.push('页面是 https：音频也必须走 https，否则被混合内容规则拦掉');
+      /* 只有“页面是 https、音效却不是同源”时才需要警告；同源 https 音效本来就正常 */
+      if (pageHttps && chosen.hit && !sameOrigin(chosen.hit)) {
+        parts.push('页面是 https，但音效源不是同源 https，可能被混合内容规则拦掉');
+      }
       note('音效自检｜' + parts.join('｜'), 12000);
     }
 
@@ -426,24 +434,47 @@ window.onerror = function (msg, src, line, col) {
     soundBtn.textContent = muted ? '音效 关' : '音效 开';
   });
 
-  /* ======= 预加载两张图：能解码才启用图片外观，否则保持纯色兜底 ======= */
+  /* ======= 图片外观 =======
+     分工：
+       sucai/gqk.png  —— 还没按下的方块
+       sucai/gqk2.png —— 按下去的方块（留在这块原来的位置下面一格）
+       sucai/gqk1.png —— 兜底：sucai 里没有 gqk2.png 时顶上
+     任何一张没解码成功，就退回纯色（白底 / 深灰 + 灰方块），照样能玩 */
+  var IMG_SRC = { idle: './sucai/gqk.png', done: './sucai/gqk2.png', alt: './sucai/gqk1.png' };
+
+  /* 按「这块是不是已按下」决定披哪张图 */
+  function imgClass(isDone) {
+    if (isDone) return imgOK.done ? 'img' : (imgOK.alt ? 'imgf' : '');
+    return imgOK.idle ? 'img' : '';
+  }
+
+  /* 图片是异步解码的：图到位后，把已经画在盘面上的方块补上 class */
+  function refreshTileImg(el) {
+    var want = imgClass(el.classList.contains('done'));
+    el.classList.remove('img', 'imgf');
+    if (want) el.classList.add(want);
+  }
+
   (function preload() {
-    function check(url, key, cls) {
+    function check(url, key) {
       var im = new Image();
       im.onload = function () {
-        if (!im.naturalWidth) return;
+        if (!im.naturalWidth) return;              // 宽高为 0 视为解码失败
         imgOK[key] = true;
-        var list = document.querySelectorAll('.tile');
-        var i;
-        for (i = 0; i < list.length; i++) {
-          if (list[i].classList.contains('done') === (key === 'done')) list[i].classList.add(cls);
+        var list = document.querySelectorAll('.tile'), i;
+        for (i = 0; i < list.length; i++) refreshTileImg(list[i]);
+      };
+      im.onerror = function () {
+        imgOK[key] = false;
+        if (key === 'done') {
+          note('图片提示｜sucai/gqk2.png 还没放进来，按下的方块先拿 sucai/gqk1.png 顶替', 12000);
         }
       };
-      im.onerror = function () { imgOK[key] = false; };
       im.src = url;
     }
-    check('gqk.png', 'idle', 'img');
-    check('gqk1.png', 'done', 'img');
+    check(IMG_SRC.idle, 'idle');
+    check(IMG_SRC.done, 'done');
+    check(IMG_SRC.alt, 'alt');
   })();
 
   /* ======= 状态中后段 ======= */
@@ -495,19 +526,24 @@ window.onerror = function (msg, src, line, col) {
   }
 
   /* 重画整页：rows 下标 n 摆到行 (baseRow - (n - cursor))，
-     所以 cursor 那一行在最底可按行，越往上下标越大；
-     已按过的行（下标 < cursor）留在上方作为记录 */
+     cursor 那一行永远落在最底可按行，下标越大越靠上；
+     下标 < cursor 的是已经按过的，起点取 cursor-1 —— 也就是「刚刚按下的那一块」：
+     它从按下时那一行滑到最底行停住、换成 gqk2，而不是被清掉；
+     再往前的旧方块已经滑出屏幕底部，就不再画了 */
   function paint() {
-    var baseRow = ROWS - 2;          // 最底一行始终留空
-    var n, row, col;
+    var baseRow = ROWS - 2;          // 可按的那一行；最底一行专门留给刚按下的方块
+    var n, row, col, t, isDone;
     blankAll();
-    for (n = cursor; n < rows.length; n++) {
+    for (n = Math.max(0, cursor - 1); n < rows.length; n++) {
       row = baseRow - (n - cursor);
       if (row < 0) break;            // 已经移出屏幕顶部
+      if (row >= ROWS) continue;     // 已经滑出屏幕底部
       col = Math.max(0, Math.min(COLS - 1, rows[n][0]));
-      var t = document.createElement('div');
-      var isDone = (n < cursor);
-      t.className = 'tile' + (isDone ? ' done' : '') + (imgOK[isDone ? 'done' : 'idle'] ? ' img' : '');
+      isDone = (n < cursor);
+      t = document.createElement('div');
+      var ic = imgClass(isDone);     // 必须自己补上空格：imgClass() 返回的是裸类名，
+                                     // 直接拼接会拼成 "tileimg" 这种谁都不认识的类名，方块会整个不显示
+      t.className = 'tile' + (isDone ? ' done' : '') + (ic ? ' ' + ic : '');
       if (n === cursor) t.classList.add('next');     // 唯一可按的那个
       t.dataset.row = row;
       t.dataset.col = col;
@@ -611,7 +647,7 @@ window.onerror = function (msg, src, line, col) {
       }
     }
 
-    var TARGET = ROWS - 2;               // 可按的那一行（最底行恒为空白）
+    var TARGET = ROWS - 2;               // 可按的那一行（最底行留给刚按下的方块）
 
     /* ① 越级按：点到了可按行以外的任何格子 → 结束 */
     if (hit.row !== TARGET) {
@@ -628,14 +664,14 @@ window.onerror = function (msg, src, line, col) {
       return;
     }
 
-    /* ③ 正常按中：从低向高依次推进 */
+    /* ③ 正常按中：从低向高依次推进。
+       这里不用手动改外观：advance() → paint() 会立刻把这一块重画成
+       「已按下 + gqk2」并留在原地，所以它不会凭空消失 */
     var el = cells[TARGET][hit.col].firstChild.firstChild;
     if (!el || el.classList.contains('done')) return;      // 已按过的不响应，也不判负
 
     lastPress = now;
     if (!endAt) { endAt = now + DURATION * 1000; tick(); }  // 第一块才开始计时
-    el.classList.add('done');
-    if (imgOK.done) el.classList.add('img');
     score++;
     scoreEl.textContent = score;
     play('hit');
@@ -674,12 +710,9 @@ window.onerror = function (msg, src, line, col) {
     document.title = '来吧,走↑起↓';
     var badge = document.getElementById('err');
     if (badge) badge.textContent = 'v' + BUILD + ' · 就绪';
-    if (pageHttps) {
-      setTimeout(function () {
-        note('音频提示｜本页是 https，音效只能走 http，可能被浏览器的混合内容规则拦掉：' +
-             '请改用穿透的 http 地址访问，或让小皮面板也开 https', 15000);
-      }, 1200);
-    }
+    /* 这里原本无条件弹一句“本页是 https，音效只能走 http”的警告，
+       那是早年内网穿透（页面 https、音频只有 http）时代留下的，会让人误以为线上没声音。
+       音频现在和页面同源，https 下走同源通道，能不能用由 audioSelfCheck 如实报告。 */
   }
 })();
 </script>
